@@ -34,12 +34,14 @@ struct AuthInner {
     token: Option<Token>,
 }
 
+/// Handles authentication by automatically fetching and refreshing bearer tokens.
 #[derive(Debug, Clone)]
 pub struct Auth {
     inner: Arc<Mutex<AuthInner>>,
 }
 
 impl Auth {
+    /// Creates a new `Auth` instance.
     pub fn new(client_id: String, client_secret: String, token_url: Url) -> Self {
         let inner = AuthInner {
             client_id,
@@ -53,6 +55,7 @@ impl Auth {
         }
     }
 
+    /// Returns a valid bearer token, fetching a new one if necessary.
     pub async fn get_token(&self) -> Result<String, Error> {
         let mut inner = self.inner.lock().await;
 
