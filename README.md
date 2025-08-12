@@ -4,6 +4,8 @@ A Rust client for the Blockstream Esplora API.
 
 This client provides asynchronous access to the Esplora API. It supports both the public, unauthenticated API and the enterprise API, which requires authentication.
 
+Implements all endpoints documented at https://github.com/Blockstream/esplora/blob/master/API.md.
+
 ## Adding to Your Project
 
 To use this client in your Rust project, add the following to your `Cargo.toml` file:

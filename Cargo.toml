@@ -1,5 +1,7 @@
 [package]
 name = "esplora-rs"
+description = "A Rust Implementation of the Blockstream Esplora API."
+license = "GPL-2.0-or-later"
 version = "0.1.0"
 edition = "2021"
 
