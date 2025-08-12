@@ -236,6 +236,8 @@ async fn main() {
 
 ### Liquid Endpoints
 
+The Liquid api offers the same endpoints as are illustrated for Bitcoin above, plus asset endpoints.
+
 #### Get Asset Info
 
 This example shows how to get information about a Liquid asset.
