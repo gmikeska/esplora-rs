@@ -12,7 +12,7 @@ pub use models::{
 };
 
 use bytes::Bytes;
-use reqwest::header::AUTHORIZATION;
+use reqwest::header::{ACCEPT, AUTHORIZATION};
 use reqwest::Client as ReqwestClient;
 use url::Url;
 
@@ -45,6 +45,23 @@ impl Client {
         Self::from_parts(base_url, token_url, client_id, client_secret)
     }
 
+    /// Creates a new Esplora client for a public API URL.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the URL is invalid.
+    pub fn new_public(base_url: &str) -> Result<Self, Error> {
+        let auth = Auth::new_public();
+        let http_client = ReqwestClient::new();
+        let base_url = Url::parse(base_url)?;
+
+        Ok(Self {
+            http_client,
+            base_url,
+            auth,
+        })
+    }
+
     /// Creates a new Esplora client from its constituent parts. Useful for testing.
     fn from_parts(
         base_url: &str,
@@ -66,14 +83,12 @@ impl Client {
     async fn get<T: serde::de::DeserializeOwned>(&self, path: &str) -> Result<T, Error> {
         let token = self.auth.get_token().await?;
         let url = self.base_url.join(path)?;
+        let mut req = self.http_client.get(url).header(ACCEPT, "application/json");
+        if let Some(token) = token {
+            req = req.header(AUTHORIZATION, format!("Bearer {}", token));
+        }
 
-        let response = self
-            .http_client
-            .get(url)
-            .header(AUTHORIZATION, format!("Bearer {}", token))
-            .send()
-            .await?
-            .error_for_status()?;
+        let response = req.send().await?.error_for_status()?;
 
         Ok(response.json().await?)
     }
@@ -85,15 +100,12 @@ impl Client {
     ) -> Result<T, Error> {
         let token = self.auth.get_token().await?;
         let url = self.base_url.join(path)?;
+        let mut req = self.http_client.post(url).header(ACCEPT, "application/json");
+        if let Some(token) = token {
+            req = req.header(AUTHORIZATION, format!("Bearer {}", token));
+        }
 
-        let response = self
-            .http_client
-            .post(url)
-            .header(AUTHORIZATION, format!("Bearer {}", token))
-            .body(body)
-            .send()
-            .await?
-            .error_for_status()?;
+        let response = req.body(body).send().await?.error_for_status()?;
 
         Ok(response.json().await?)
     }
@@ -101,14 +113,12 @@ impl Client {
      async fn get_plain(&self, path: &str) -> Result<String, Error> {
         let token = self.auth.get_token().await?;
         let url = self.base_url.join(path)?;
+        let mut req = self.http_client.get(url).header(ACCEPT, "text/plain");
+        if let Some(token) = token {
+            req = req.header(AUTHORIZATION, format!("Bearer {}", token));
+        }
 
-        let response = self
-            .http_client
-            .get(url)
-            .header(AUTHORIZATION, format!("Bearer {}", token))
-            .send()
-            .await?
-            .error_for_status()?;
+        let response = req.send().await?.error_for_status()?;
 
         Ok(response.text().await?)
     }
@@ -116,14 +126,12 @@ impl Client {
     async fn get_raw(&self, path: &str) -> Result<Bytes, Error> {
         let token = self.auth.get_token().await?;
         let url = self.base_url.join(path)?;
+        let mut req = self.http_client.get(url).header(ACCEPT, "application/octet-stream");
+        if let Some(token) = token {
+            req = req.header(AUTHORIZATION, format!("Bearer {}", token));
+        }
 
-        let response = self
-            .http_client
-            .get(url)
-            .header(AUTHORIZATION, format!("Bearer {}", token))
-            .send()
-            .await?
-            .error_for_status()?;
+        let response = req.send().await?.error_for_status()?;
 
         Ok(response.bytes().await?)
     }
@@ -464,9 +472,9 @@ mod tests {
             println!("Skipping live test for get_block");
             return;
         }
-        let client = Client::new("https://enterprise.blockstream.info/testnet/api").unwrap();
+        let client = Client::new_public("https://blockstream.info/testnet/api/").unwrap();
         // A known testnet block
-        let block_hash = "0000000000000034a3646d53e345e8284835d88e07c875104a371343f76d3ba0";
+        let block_hash = "0000000053f3c29ea7eab85dfbf7849bc3ddf9a22f1166169989e834ef984db4";
         let result = client.get_block(block_hash).await;
 
         assert!(result.is_ok(), "API call failed: {:?}", result.err());
@@ -480,7 +488,7 @@ mod tests {
             println!("Skipping live test for get_tip_height");
             return;
         }
-        let client = Client::new("https://enterprise.blockstream.info/testnet/api").unwrap();
+        let client = Client::new_public("https://blockstream.info/testnet/api/").unwrap();
         let result = client.get_tip_height().await;
         assert!(result.is_ok(), "API call failed: {:?}", result.err());
         assert!(result.unwrap() > 2_000_000, "Testnet height should be over 2M");
@@ -558,9 +566,9 @@ mod tests {
             println!("Skipping live test for get_tx");
             return;
         }
-        let client = Client::new("https://enterprise.blockstream.info/testnet/api").unwrap();
+        let client = Client::new_public("https://blockstream.info/testnet/api/").unwrap();
         // A known testnet transaction
-        let txid = "e1bfa234b5c178342323c2153297a9b0498a445e434d3137e1b8581a1e41131c";
+        let txid = "29e7085b084db673f7c70cc1fdbbbe8dd75ad075ca5c0aeb233b74b23710c4d4";
         let result = client.get_tx(txid).await;
 
         assert!(result.is_ok(), "API call failed: {:?}", result.err());
@@ -638,9 +646,9 @@ mod tests {
             println!("Skipping live test for get_address_info");
             return;
         }
-        let client = Client::new("https://enterprise.blockstream.info/testnet/api").unwrap();
+        let client = Client::new_public("https://blockstream.info/testnet/api/").unwrap();
         // A known testnet address with some history
-        let address = "tb1qg398h9k5j2zgjfgz0w6py5k23z5d5x4m4q0z0h";
+        let address = "tb1qxdjp5w4y7449cm5qensttdeauzlxquqtr289ql";
         let result = client.get_address_info(address).await;
 
         assert!(result.is_ok(), "API call failed: {:?}", result.err());
@@ -717,7 +725,7 @@ mod tests {
             println!("Skipping live test for get_fee_estimates");
             return;
         }
-        let client = Client::new("https://enterprise.blockstream.info/testnet/api").unwrap();
+        let client = Client::new_public("https://blockstream.info/testnet/api/").unwrap();
         let result = client.get_fee_estimates().await;
 
         assert!(result.is_ok(), "API call failed: {:?}", result.err());
@@ -764,7 +772,7 @@ mod tests {
             return;
         }
         // Use the liquid testnet for this
-        let client = Client::new("https://enterprise.blockstream.info/liquidtestnet/api").unwrap();
+        let client = Client::new_public("https://blockstream.info/liquidtestnet/api/").unwrap();
         // L-BTC asset ID for liquid testnet
         let asset_id = "144c654344aa716d6f3abcc1ca90e5641e4e2a7f633bc09fe3baf64585819a49";
         let result = client.get_asset_info(asset_id).await;
