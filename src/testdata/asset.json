@@ -1,0 +1,43 @@
+{
+  "asset_id": "d8a317ce2c14241192cbb3ebdb9696250ca1251a58ba6251c29fcfe126c9ca1f",
+  "issuance_txin": {
+    "txid": "39affca34bd51ed080f89f1e7a5c7a49d6d9e4779c84424ae50df67dd60dcaf7",
+    "vin": 0
+  },
+  "issuance_prevout": {
+    "txid": "0cdd74c540af637d5a3874ce8500891fd8e94ec8e3d5d436d86e87b6759a7674",
+    "vout": 0
+  },
+  "reissuance_token": "eb8b210d42566699796dbf78649120fd5c9d9b04cabc8f480856e04bd5e9fc22",
+  "contract_hash": "025d983cc774da665f412ccc6ccf51cb017671c2cb0d3c32d10d50ffdf0a57de",
+  "status": {
+    "confirmed": true,
+    "block_height": 105,
+    "block_hash": "7bf84f2aea30b02981a220943f543a6d6e7ac646d59ef76cff27dca8d27b2b67",
+    "block_time": 1586248729
+  },
+  "chain_stats": {
+    "tx_count": 1,
+    "issuance_count": 1,
+    "issued_amount": 0,
+    "burned_amount": 0,
+    "has_blinded_issuances": true,
+    "reissuance_tokens": 0,
+    "burned_reissuance_tokens": 0
+  },
+  "mempool_stats": {
+    "tx_count": 0,
+    "issuance_count": 0,
+    "issued_amount": 0,
+    "burned_amount": 0,
+    "has_blinded_issuances": false,
+    "reissuance_tokens": null,
+    "burned_reissuance_tokens": 0
+  },
+  "ticker": "TEST",
+  "name": "Test Asset",
+  "precision": 8,
+  "entity": {
+    "domain": "test.com"
+  }
+}
