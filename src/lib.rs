@@ -12,12 +12,13 @@ pub use models::{
 };
 
 use bytes::Bytes;
-use reqwest::header::AUTHORIZATION;
+use reqwest::header::{ACCEPT, AUTHORIZATION};
 use reqwest::Client as ReqwestClient;
 use url::Url;
 
 const DEFAULT_TOKEN_URL: &str = "https://login.blockstream.com/realms/blockstream-public/protocol/openid-connect/token";
 
+/// An asynchronous client for the Blockstream Esplora API.
 #[derive(Debug, Clone)]
 pub struct Client {
     http_client: ReqwestClient,
@@ -44,6 +45,23 @@ impl Client {
         Self::from_parts(base_url, token_url, client_id, client_secret)
     }
 
+    /// Creates a new Esplora client for a public API URL.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the URL is invalid.
+    pub fn new_public(base_url: &str) -> Result<Self, Error> {
+        let auth = Auth::new_public();
+        let http_client = ReqwestClient::new();
+        let base_url = Url::parse(base_url)?;
+
+        Ok(Self {
+            http_client,
+            base_url,
+            auth,
+        })
+    }
+
     /// Creates a new Esplora client from its constituent parts. Useful for testing.
     fn from_parts(
         base_url: &str,
@@ -65,14 +83,12 @@ impl Client {
     async fn get<T: serde::de::DeserializeOwned>(&self, path: &str) -> Result<T, Error> {
         let token = self.auth.get_token().await?;
         let url = self.base_url.join(path)?;
+        let mut req = self.http_client.get(url).header(ACCEPT, "application/json");
+        if let Some(token) = token {
+            req = req.header(AUTHORIZATION, format!("Bearer {}", token));
+        }
 
-        let response = self
-            .http_client
-            .get(url)
-            .header(AUTHORIZATION, format!("Bearer {}", token))
-            .send()
-            .await?
-            .error_for_status()?;
+        let response = req.send().await?.error_for_status()?;
 
         Ok(response.json().await?)
     }
@@ -84,15 +100,12 @@ impl Client {
     ) -> Result<T, Error> {
         let token = self.auth.get_token().await?;
         let url = self.base_url.join(path)?;
+        let mut req = self.http_client.post(url).header(ACCEPT, "application/json");
+        if let Some(token) = token {
+            req = req.header(AUTHORIZATION, format!("Bearer {}", token));
+        }
 
-        let response = self
-            .http_client
-            .post(url)
-            .header(AUTHORIZATION, format!("Bearer {}", token))
-            .body(body)
-            .send()
-            .await?
-            .error_for_status()?;
+        let response = req.body(body).send().await?.error_for_status()?;
 
         Ok(response.json().await?)
     }
@@ -100,14 +113,12 @@ impl Client {
      async fn get_plain(&self, path: &str) -> Result<String, Error> {
         let token = self.auth.get_token().await?;
         let url = self.base_url.join(path)?;
+        let mut req = self.http_client.get(url).header(ACCEPT, "text/plain");
+        if let Some(token) = token {
+            req = req.header(AUTHORIZATION, format!("Bearer {}", token));
+        }
 
-        let response = self
-            .http_client
-            .get(url)
-            .header(AUTHORIZATION, format!("Bearer {}", token))
-            .send()
-            .await?
-            .error_for_status()?;
+        let response = req.send().await?.error_for_status()?;
 
         Ok(response.text().await?)
     }
@@ -115,47 +126,53 @@ impl Client {
     async fn get_raw(&self, path: &str) -> Result<Bytes, Error> {
         let token = self.auth.get_token().await?;
         let url = self.base_url.join(path)?;
+        let mut req = self.http_client.get(url).header(ACCEPT, "application/octet-stream");
+        if let Some(token) = token {
+            req = req.header(AUTHORIZATION, format!("Bearer {}", token));
+        }
 
-        let response = self
-            .http_client
-            .get(url)
-            .header(AUTHORIZATION, format!("Bearer {}", token))
-            .send()
-            .await?
-            .error_for_status()?;
+        let response = req.send().await?.error_for_status()?;
 
         Ok(response.bytes().await?)
     }
 
     // Blocks
+    /// Gets a block by its hash.
     pub async fn get_block(&self, hash: &str) -> Result<Block, Error> {
         self.get(&format!("block/{}", hash)).await
     }
 
+    /// Gets the hex-encoded block header by its hash.
     pub async fn get_block_header(&self, hash: &str) -> Result<String, Error> {
         self.get_plain(&format!("block/{}/header", hash)).await
     }
 
+    /// Gets the status of a block by its hash.
     pub async fn get_block_status(&self, hash: &str) -> Result<BlockStatus, Error> {
         self.get(&format!("block/{}/status", hash)).await
     }
 
+    /// Gets a list of transaction IDs in a block.
     pub async fn get_block_txids(&self, hash: &str) -> Result<Vec<String>, Error> {
         self.get(&format!("block/{}/txids", hash)).await
     }
 
+    /// Gets the transaction ID at a specific index in a block.
     pub async fn get_block_txid_at_index(&self, hash: &str, index: u64) -> Result<String, Error> {
         self.get_plain(&format!("block/{}/txid/{}", hash, index)).await
     }
 
+    /// Gets the raw block by its hash.
     pub async fn get_raw_block(&self, hash: &str) -> Result<Bytes, Error> {
         self.get_raw(&format!("block/{}/raw", hash)).await
     }
 
+    /// Gets the block hash at a specific height.
     pub async fn get_block_hash_from_height(&self, height: u64) -> Result<String, Error> {
         self.get_plain(&format!("block-height/{}", height)).await
     }
 
+    /// Gets a list of blocks starting from a specific height.
     pub async fn get_blocks(&self, start_height: Option<u64>) -> Result<Vec<Block>, Error> {
         let path = if let Some(height) = start_height {
             format!("blocks/{}", height)
@@ -165,10 +182,12 @@ impl Client {
         self.get(&path).await
     }
 
+    /// Gets the hash of the current tip of the chain.
     pub async fn get_tip_hash(&self) -> Result<String, Error> {
         self.get_plain("blocks/tip/hash").await
     }
 
+    /// Gets the height of the current tip of the chain.
     pub async fn get_tip_height(&self) -> Result<u64, Error> {
         let height_str = self.get_plain("blocks/tip/height").await?;
         height_str
@@ -176,6 +195,7 @@ impl Client {
             .map_err(|e| Error::Api(format!("Failed to parse height: {}", e)))
     }
 
+    /// Gets a list of transactions in a block.
     pub async fn get_block_txs(&self, hash: &str, start_index: Option<u64>) -> Result<Vec<Transaction>, Error> {
         let path = if let Some(start) = start_index {
             format!("block/{}/txs/{}", hash, start)
@@ -186,51 +206,63 @@ impl Client {
     }
 
     // Transactions
+    /// Gets a transaction by its ID.
     pub async fn get_tx(&self, txid: &str) -> Result<Transaction, Error> {
         self.get(&format!("tx/{}", txid)).await
     }
 
+    /// Gets the status of a transaction by its ID.
     pub async fn get_tx_status(&self, txid: &str) -> Result<TxStatus, Error> {
         self.get(&format!("tx/{}/status", txid)).await
     }
 
+    /// Gets the hex-encoded transaction by its ID.
     pub async fn get_tx_hex(&self, txid: &str) -> Result<String, Error> {
         self.get_plain(&format!("tx/{}/hex", txid)).await
     }
 
+    /// Gets the raw transaction by its ID.
     pub async fn get_raw_tx(&self, txid: &str) -> Result<Bytes, Error> {
         self.get_raw(&format!("tx/{}/raw", txid)).await
     }
 
+    /// Gets the Merkle block proof for a transaction.
     pub async fn get_tx_merkle_block_proof(&self, txid: &str) -> Result<String, Error> {
         self.get_plain(&format!("tx/{}/merkleblock-proof", txid)).await
     }
 
+    /// Gets the spending status of a transaction output.
     pub async fn get_outspend(&self, txid: &str, vout: u32) -> Result<Outspend, Error> {
         self.get(&format!("tx/{}/outspend/{}", txid, vout)).await
     }
 
+    /// Gets the spending status of all outputs of a transaction.
     pub async fn get_outspends(&self, txid: &str) -> Result<Vec<Outspend>, Error> {
         self.get(&format!("tx/{}/outspends", txid)).await
     }
 
+    /// Broadcasts a transaction to the network.
     pub async fn broadcast_tx(&self, tx_hex: &str) -> Result<String, Error> {
         self.post("tx", tx_hex.to_string()).await
     }
 
     // Addresses
+    /// Gets information about an address.
     pub async fn get_address_info(&self, address: &str) -> Result<AddressInfo, Error> {
         self.get(&format!("address/{}", address)).await
     }
 
+    /// Gets information about a scripthash.
     pub async fn get_scripthash_info(&self, hash: &str) -> Result<AddressInfo, Error> {
         self.get(&format!("scripthash/{}", hash)).await
     }
 
+    /// Gets a list of transactions for an address.
     pub async fn get_address_txs(&self, address: &str) -> Result<Vec<Transaction>, Error> {
         self.get(&format!("address/{}/txs", address)).await
     }
 
+    /// Gets a list of transactions for an address, starting from a specific transaction.
     pub async fn get_address_txs_chain(
         &self,
         address: &str,
@@ -244,45 +276,55 @@ impl Client {
         self.get(&path).await
     }
 
+    /// Gets a list of unconfirmed transactions for an address.
     pub async fn get_address_mempool_txs(&self, address: &str) -> Result<Vec<Transaction>, Error> {
         self.get(&format!("address/{}/txs/mempool", address)).await
     }
 
+    /// Gets a list of unspent transaction outputs for an address.
     pub async fn get_address_utxos(&self, address: &str) -> Result<Vec<Utxo>, Error> {
         self.get(&format!("address/{}/utxo", address)).await
     }
 
+    /// Searches for addresses with a given prefix.
     pub async fn search_addresses(&self, prefix: &str) -> Result<Vec<String>, Error> {
         self.get(&format!("address-prefix/{}", prefix)).await
     }
 
     // Mempool
+    /// Gets information about the mempool.
     pub async fn get_mempool_info(&self) -> Result<Mempool, Error> {
         self.get("mempool").await
     }
 
+    /// Gets a list of transaction IDs in the mempool.
     pub async fn get_mempool_txids(&self) -> Result<Vec<String>, Error> {
         self.get("mempool/txids").await
     }
 
+    /// Gets a list of recent transactions in the mempool.
     pub async fn get_mempool_recent_txs(&self) -> Result<Vec<RecentTx>, Error> {
         self.get("mempool/recent").await
     }
 
     // Fee Estimates
+    /// Gets fee estimates for various confirmation targets.
     pub async fn get_fee_estimates(&self) -> Result<FeeEstimates, Error> {
         self.get("fee-estimates").await
     }
 
     // Assets
+    /// Gets information about an asset.
     pub async fn get_asset_info(&self, asset_id: &str) -> Result<AssetInfo, Error> {
         self.get(&format!("asset/{}", asset_id)).await
     }
 
+    /// Gets a list of transactions for an asset.
     pub async fn get_asset_txs(&self, asset_id: &str) -> Result<Vec<Transaction>, Error> {
         self.get(&format!("asset/{}/txs", asset_id)).await
     }
 
+    /// Gets a list of transactions for an asset, starting from a specific transaction.
     pub async fn get_asset_txs_chain(
         &self,
         asset_id: &str,
@@ -296,15 +338,18 @@ impl Client {
         self.get(&path).await
     }
 
+    /// Gets a list of unconfirmed transactions for an asset.
     pub async fn get_asset_mempool_txs(&self, asset_id: &str) -> Result<Vec<Transaction>, Error> {
         self.get(&format!("asset/{}/txs/mempool", asset_id)).await
     }
 
+    /// Gets the total supply of an asset.
     pub async fn get_asset_supply(&self, asset_id: &str) -> Result<u64, Error> {
         let supply_str = self.get_plain(&format!("asset/{}/supply", asset_id)).await?;
         supply_str.parse::<u64>().map_err(|e| Error::Api(format!("Failed to parse supply: {}", e)))
     }
 
+    /// Gets the total supply of an asset, in decimal form.
     pub async fn get_asset_supply_decimal(&self, asset_id: &str) -> Result<f64, Error> {
         let supply_str = self.get_plain(&format!("asset/{}/supply/decimal", asset_id)).await?;
         supply_str.parse::<f64>().map_err(|e| Error::Api(format!("Failed to parse decimal supply: {}", e)))
@@ -427,9 +472,9 @@ mod tests {
             println!("Skipping live test for get_block");
             return;
         }
-        let client = Client::new("https://enterprise.blockstream.info/testnet/api").unwrap();
+        let client = Client::new_public("https://blockstream.info/testnet/api/").unwrap();
         // A known testnet block
-        let block_hash = "0000000000000034a3646d53e345e8284835d88e07c875104a371343f76d3ba0";
+        let block_hash = "0000000053f3c29ea7eab85dfbf7849bc3ddf9a22f1166169989e834ef984db4";
         let result = client.get_block(block_hash).await;
 
         assert!(result.is_ok(), "API call failed: {:?}", result.err());
@@ -443,7 +488,7 @@ mod tests {
             println!("Skipping live test for get_tip_height");
             return;
         }
-        let client = Client::new("https://enterprise.blockstream.info/testnet/api").unwrap();
+        let client = Client::new_public("https://blockstream.info/testnet/api/").unwrap();
         let result = client.get_tip_height().await;
         assert!(result.is_ok(), "API call failed: {:?}", result.err());
         assert!(result.unwrap() > 2_000_000, "Testnet height should be over 2M");
@@ -521,9 +566,9 @@ mod tests {
             println!("Skipping live test for get_tx");
             return;
         }
-        let client = Client::new("https://enterprise.blockstream.info/testnet/api").unwrap();
+        let client = Client::new_public("https://blockstream.info/testnet/api/").unwrap();
         // A known testnet transaction
-        let txid = "e1bfa234b5c178342323c2153297a9b0498a445e434d3137e1b8581a1e41131c";
+        let txid = "29e7085b084db673f7c70cc1fdbbbe8dd75ad075ca5c0aeb233b74b23710c4d4";
         let result = client.get_tx(txid).await;
 
         assert!(result.is_ok(), "API call failed: {:?}", result.err());
@@ -601,9 +646,9 @@ mod tests {
             println!("Skipping live test for get_address_info");
             return;
         }
-        let client = Client::new("https://enterprise.blockstream.info/testnet/api").unwrap();
+        let client = Client::new_public("https://blockstream.info/testnet/api/").unwrap();
         // A known testnet address with some history
-        let address = "tb1qg398h9k5j2zgjfgz0w6py5k23z5d5x4m4q0z0h";
+        let address = "tb1qxdjp5w4y7449cm5qensttdeauzlxquqtr289ql";
         let result = client.get_address_info(address).await;
 
         assert!(result.is_ok(), "API call failed: {:?}", result.err());
@@ -680,7 +725,7 @@ mod tests {
             println!("Skipping live test for get_fee_estimates");
             return;
         }
-        let client = Client::new("https://enterprise.blockstream.info/testnet/api").unwrap();
+        let client = Client::new_public("https://blockstream.info/testnet/api/").unwrap();
         let result = client.get_fee_estimates().await;
 
         assert!(result.is_ok(), "API call failed: {:?}", result.err());
@@ -727,7 +772,7 @@ mod tests {
             return;
         }
         // Use the liquid testnet for this
-        let client = Client::new("https://enterprise.blockstream.info/liquidtestnet/api").unwrap();
+        let client = Client::new_public("https://blockstream.info/liquidtestnet/api/").unwrap();
         // L-BTC asset ID for liquid testnet
         let asset_id = "144c654344aa716d6f3abcc1ca90e5641e4e2a7f633bc09fe3baf64585819a49";
         let result = client.get_asset_info(asset_id).await;
