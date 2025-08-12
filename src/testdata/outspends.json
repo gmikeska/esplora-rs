@@ -1,0 +1,16 @@
+[
+  {
+    "spent": true,
+    "txid": "b9d9af7a0493344a33827f3f3f5a04f8b9d9af7a0493344a33827f3f3f5a04f8",
+    "vin": 0,
+    "status": {
+      "confirmed": true,
+      "block_height": 2000001,
+      "block_hash": "0000000000000034a3646d53e345e8284835d88e07c875104a371343f76d3ba1",
+      "block_time": 1609459800
+    }
+  },
+  {
+    "spent": false
+  }
+]
