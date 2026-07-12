@@ -14,10 +14,11 @@ pub use models::{
 use bytes::Bytes;
 use reqwest::header::{ACCEPT, AUTHORIZATION};
 use reqwest::Client as ReqwestClient;
-use tracing::{debug, error, info, trace, warn};
+use tracing::{debug, error, info, trace};
 use url::Url;
 
-const DEFAULT_TOKEN_URL: &str = "https://login.blockstream.com/realms/blockstream-public/protocol/openid-connect/token";
+const DEFAULT_TOKEN_URL: &str =
+    "https://login.blockstream.com/realms/blockstream-public/protocol/openid-connect/token";
 
 /// An asynchronous client for the Blockstream Esplora API.
 #[derive(Debug, Clone)]
@@ -25,6 +26,17 @@ pub struct Client {
     http_client: ReqwestClient,
     base_url: Url,
     auth: Auth,
+}
+
+/// Ensure the base URL ends with `/` so [`Url::join`] appends path segments
+/// instead of replacing the final one (`…/api` + `tx` → `…/tx`, a silent
+/// endpoint bug).
+fn ensure_base_slash(url: &str) -> String {
+    if url.ends_with('/') {
+        url.to_string()
+    } else {
+        format!("{}/", url)
+    }
 }
 
 impl Client {
@@ -58,7 +70,7 @@ impl Client {
             .http1_only()
             .build()
             .map_err(|e| Error::Api(format!("Failed to build HTTP client: {}", e)))?;
-        let base_url = Url::parse(base_url)?;
+        let base_url = Url::parse(&ensure_base_slash(base_url))?;
 
         Ok(Self {
             http_client,
@@ -80,7 +92,7 @@ impl Client {
             .http1_only()
             .build()
             .map_err(|e| Error::Api(format!("Failed to build HTTP client: {}", e)))?;
-        let base_url = Url::parse(base_url)?;
+        let base_url = Url::parse(&ensure_base_slash(base_url))?;
 
         Ok(Self {
             http_client,
@@ -93,8 +105,11 @@ impl Client {
         let token = self.auth.get_token().await?;
         let url = self.base_url.join(path)?;
         debug!(target: "esplora_rs", "GET {}", url);
-        
-        let mut req = self.http_client.get(url.clone()).header(ACCEPT, "application/json");
+
+        let mut req = self
+            .http_client
+            .get(url.clone())
+            .header(ACCEPT, "application/json");
         if let Some(token) = token {
             req = req.header(AUTHORIZATION, format!("Bearer {}", token));
             trace!(target: "esplora_rs", "Using auth token");
@@ -103,7 +118,7 @@ impl Client {
         let response = req.send().await?;
         let status = response.status();
         debug!(target: "esplora_rs", "GET {} -> {}", url, status);
-        
+
         if !status.is_success() {
             let body = response.text().await.unwrap_or_default();
             error!(target: "esplora_rs", "GET {} failed ({}): {}", url, status, body);
@@ -113,6 +128,9 @@ impl Client {
         Ok(response.json().await?)
     }
 
+    /// Generic POST returning a JSON body. Unused since `broadcast_tx` reads
+    /// the plain-text txid directly; kept for future POST-JSON endpoints.
+    #[allow(dead_code)]
     async fn post<T: serde::de::DeserializeOwned>(
         &self,
         path: &str,
@@ -122,8 +140,11 @@ impl Client {
         let url = self.base_url.join(path)?;
         debug!(target: "esplora_rs", "POST {} (body_len={})", url, body.len());
         trace!(target: "esplora_rs", "POST body: {}", &body[..body.len().min(200)]);
-        
-        let mut req = self.http_client.post(url.clone()).header(ACCEPT, "application/json");
+
+        let mut req = self
+            .http_client
+            .post(url.clone())
+            .header(ACCEPT, "application/json");
         if let Some(token) = token {
             req = req.header(AUTHORIZATION, format!("Bearer {}", token));
             trace!(target: "esplora_rs", "Using auth token");
@@ -132,7 +153,7 @@ impl Client {
         let response = req.body(body).send().await?;
         let status = response.status();
         debug!(target: "esplora_rs", "POST {} -> {}", url, status);
-        
+
         if !status.is_success() {
             let resp_body = response.text().await.unwrap_or_default();
             error!(target: "esplora_rs", "POST {} failed ({}): {}", url, status, resp_body);
@@ -146,8 +167,11 @@ impl Client {
         let token = self.auth.get_token().await?;
         let url = self.base_url.join(path)?;
         debug!(target: "esplora_rs", "GET (plain) {}", url);
-        
-        let mut req = self.http_client.get(url.clone()).header(ACCEPT, "text/plain");
+
+        let mut req = self
+            .http_client
+            .get(url.clone())
+            .header(ACCEPT, "text/plain");
         if let Some(token) = token {
             req = req.header(AUTHORIZATION, format!("Bearer {}", token));
             trace!(target: "esplora_rs", "Using auth token");
@@ -156,14 +180,14 @@ impl Client {
         let response = req.send().await?;
         let status = response.status();
         let body = response.text().await?;
-        
+
         debug!(target: "esplora_rs", "GET (plain) {} -> {} (len={})", url, status, body.len());
-        
+
         if !status.is_success() {
             error!(target: "esplora_rs", "GET (plain) {} failed ({}): {}", url, status, body);
             return Err(Error::Api(format!("HTTP {}: {}", status, body)));
         }
-        
+
         trace!(target: "esplora_rs", "GET (plain) response: {}", &body[..body.len().min(200)]);
         Ok(body)
     }
@@ -172,8 +196,11 @@ impl Client {
         let token = self.auth.get_token().await?;
         let url = self.base_url.join(path)?;
         debug!(target: "esplora_rs", "GET (raw) {}", url);
-        
-        let mut req = self.http_client.get(url.clone()).header(ACCEPT, "application/octet-stream");
+
+        let mut req = self
+            .http_client
+            .get(url.clone())
+            .header(ACCEPT, "application/octet-stream");
         if let Some(token) = token {
             req = req.header(AUTHORIZATION, format!("Bearer {}", token));
             trace!(target: "esplora_rs", "Using auth token");
@@ -182,7 +209,7 @@ impl Client {
         let response = req.send().await?;
         let status = response.status();
         debug!(target: "esplora_rs", "GET (raw) {} -> {}", url, status);
-        
+
         if !status.is_success() {
             let body = response.text().await.unwrap_or_default();
             error!(target: "esplora_rs", "GET (raw) {} failed ({}): {}", url, status, body);
@@ -217,7 +244,8 @@ impl Client {
 
     /// Gets the transaction ID at a specific index in a block.
     pub async fn get_block_txid_at_index(&self, hash: &str, index: u64) -> Result<String, Error> {
-        self.get_plain(&format!("block/{}/txid/{}", hash, index)).await
+        self.get_plain(&format!("block/{}/txid/{}", hash, index))
+            .await
     }
 
     /// Gets the raw block by its hash.
@@ -257,7 +285,11 @@ impl Client {
     }
 
     /// Gets a list of transactions in a block.
-    pub async fn get_block_txs(&self, hash: &str, start_index: Option<u64>) -> Result<Vec<Transaction>, Error> {
+    pub async fn get_block_txs(
+        &self,
+        hash: &str,
+        start_index: Option<u64>,
+    ) -> Result<Vec<Transaction>, Error> {
         let path = if let Some(start) = start_index {
             format!("block/{}/txs/{}", hash, start)
         } else {
@@ -289,7 +321,8 @@ impl Client {
 
     /// Gets the Merkle block proof for a transaction.
     pub async fn get_tx_merkle_block_proof(&self, txid: &str) -> Result<String, Error> {
-        self.get_plain(&format!("tx/{}/merkleblock-proof", txid)).await
+        self.get_plain(&format!("tx/{}/merkleblock-proof", txid))
+            .await
     }
 
     /// Gets the spending status of a transaction output.
@@ -308,14 +341,15 @@ impl Client {
     pub async fn broadcast_tx(&self, tx_hex: &str) -> Result<String, Error> {
         info!(target: "esplora_rs", "broadcast_tx: Starting broadcast of {} byte tx", tx_hex.len() / 2);
         debug!(target: "esplora_rs", "broadcast_tx: tx_hex first 100 chars: {}", &tx_hex[..tx_hex.len().min(100)]);
-        
+
         let token = self.auth.get_token().await?;
         let url = self.base_url.join("tx")?;
-        
+
         info!(target: "esplora_rs", "broadcast_tx: POST {}", url);
         debug!(target: "esplora_rs", "broadcast_tx: Headers - Accept: text/plain, Content-Type: text/plain");
-        
-        let mut req = self.http_client
+
+        let mut req = self
+            .http_client
             .post(url.clone())
             .header(ACCEPT, "text/plain")
             .header(reqwest::header::CONTENT_TYPE, "text/plain");
@@ -335,10 +369,10 @@ impl Client {
                 return Err(e.into());
             }
         };
-        
+
         let status = response.status();
         info!(target: "esplora_rs", "broadcast_tx: Response status: {} {}", status.as_u16(), status.canonical_reason().unwrap_or(""));
-        
+
         debug!(target: "esplora_rs", "broadcast_tx: Reading response body...");
         let body = match response.text().await {
             Ok(text) => {
@@ -356,7 +390,11 @@ impl Client {
             info!(target: "esplora_rs", "broadcast_tx: SUCCESS! txid={}", txid);
             Ok(txid)
         } else {
-            let error_msg = format!("Broadcast rejected (HTTP {}): {}", status.as_u16(), body.trim());
+            let error_msg = format!(
+                "Broadcast rejected (HTTP {}): {}",
+                status.as_u16(),
+                body.trim()
+            );
             error!(target: "esplora_rs", "broadcast_tx: FAILED - {}", error_msg);
             Err(Error::Api(error_msg))
         }
@@ -464,14 +502,22 @@ impl Client {
 
     /// Gets the total supply of an asset.
     pub async fn get_asset_supply(&self, asset_id: &str) -> Result<u64, Error> {
-        let supply_str = self.get_plain(&format!("asset/{}/supply", asset_id)).await?;
-        supply_str.parse::<u64>().map_err(|e| Error::Api(format!("Failed to parse supply: {}", e)))
+        let supply_str = self
+            .get_plain(&format!("asset/{}/supply", asset_id))
+            .await?;
+        supply_str
+            .parse::<u64>()
+            .map_err(|e| Error::Api(format!("Failed to parse supply: {}", e)))
     }
 
     /// Gets the total supply of an asset, in decimal form.
     pub async fn get_asset_supply_decimal(&self, asset_id: &str) -> Result<f64, Error> {
-        let supply_str = self.get_plain(&format!("asset/{}/supply/decimal", asset_id)).await?;
-        supply_str.parse::<f64>().map_err(|e| Error::Api(format!("Failed to parse decimal supply: {}", e)))
+        let supply_str = self
+            .get_plain(&format!("asset/{}/supply/decimal", asset_id))
+            .await?;
+        supply_str
+            .parse::<f64>()
+            .map_err(|e| Error::Api(format!("Failed to parse decimal supply: {}", e)))
     }
 }
 
@@ -487,8 +533,7 @@ mod tests {
 
     fn mock_auth_server(server: &MockServer) {
         server.mock(|when, then| {
-            when.method(POST)
-                .path("/token");
+            when.method(POST).path("/token");
             then.status(200)
                 .header("content-type", "application/json")
                 .body(r#"{"access_token": "test_token", "expires_in": 300}"#);
@@ -610,7 +655,10 @@ mod tests {
         let client = Client::new_public("https://blockstream.info/testnet/api/").unwrap();
         let result = client.get_tip_height().await;
         assert!(result.is_ok(), "API call failed: {:?}", result.err());
-        assert!(result.unwrap() > 2_000_000, "Testnet height should be over 2M");
+        assert!(
+            result.unwrap() > 2_000_000,
+            "Testnet height should be over 2M"
+        );
     }
 
     #[tokio::test]
