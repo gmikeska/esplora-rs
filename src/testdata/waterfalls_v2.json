@@ -1,0 +1,28 @@
+{
+  "txs_seen": {
+    "wpkh(tpubDTEST/0/*)#abcdefgh": [
+      [
+        {
+          "txid": "6ac214c3833ee06f7a30636dac66f0e5c025ece2693cc3f85a8c22fb2dcb2fa1",
+          "height": 2859778,
+          "block_hash": "2f7499435ae332f8a94e330ad1a28914e560eab5acee430bd50e446a66d89e1a",
+          "block_timestamp": 1715939108
+        },
+        {
+          "txid": "ff5a21c44cf16e69f2455037adadb5faab15189390482df53e8fcdd2e07347f3",
+          "height": 2879588,
+          "block_hash": "f39ea35b119d314e2b77b9b6aa31a8592d98cc786c66850e11f67ecc34073158",
+          "block_timestamp": 1717134068
+        }
+      ],
+      [
+        {
+          "txid": "f80937d3834f0395a687a4eee699a43d3a711c7c0ffc2cd2c4c10996c2f1777e",
+          "height": 0
+        }
+      ]
+    ]
+  },
+  "page": 0,
+  "tip": "00000000000000bcef2b46cddb481fd75a834f2272d58226c097892538660c36"
+}

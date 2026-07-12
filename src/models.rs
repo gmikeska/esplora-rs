@@ -291,3 +291,38 @@ pub struct AssetInfo {
     /// The entity associated with the asset.
     pub entity: Option<AssetEntity>,
 }
+
+/// A single QuickSync/Waterfalls (`/v2/waterfalls`) sighting of a transaction
+/// at a derivation index.
+#[derive(Debug, Clone, Deserialize)]
+pub struct TxSeen {
+    /// The transaction id (hex).
+    pub txid: String,
+    /// The block height; `0` (or an absent block) means unconfirmed/mempool.
+    pub height: i64,
+    /// The hash of the confirming block (hex), when confirmed.
+    #[serde(default)]
+    pub block_hash: Option<String>,
+    /// The timestamp of the confirming block, when confirmed.
+    #[serde(default)]
+    pub block_timestamp: Option<u64>,
+    /// A per-sighting version marker present in some server responses.
+    #[serde(default)]
+    pub v: Option<u32>,
+}
+
+/// The `/v2/waterfalls` response: a descriptor's (or address set's) transaction
+/// history returned in a single call, grouped per single-path descriptor and
+/// per derivation index.
+#[derive(Debug, Clone, Deserialize)]
+pub struct WaterfallResponse {
+    /// Keyed by the single-path descriptor string (a multipath `<0;1>` request
+    /// returns separate `…/0/*` and `…/1/*` keys), or the literal `"addresses"`
+    /// when queried by address. The outer `Vec` is indexed by derivation index;
+    /// each inner `Vec` holds the transactions seen at that index.
+    pub txs_seen: std::collections::BTreeMap<String, Vec<Vec<TxSeen>>>,
+    /// The page number echoed by the server.
+    pub page: u16,
+    /// The chain tip block hash (hex) at scan time.
+    pub tip: String,
+}

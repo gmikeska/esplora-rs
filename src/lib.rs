@@ -8,7 +8,7 @@ pub use auth::Auth;
 pub use error::Error;
 pub use models::{
     AddressInfo, AssetInfo, Block, BlockStatus, FeeEstimates, Mempool, Outspend, RecentTx,
-    Transaction, TxStatus, Utxo,
+    Transaction, TxSeen, TxStatus, Utxo, WaterfallResponse,
 };
 
 use bytes::Bytes;
@@ -104,6 +104,48 @@ impl Client {
     async fn get<T: serde::de::DeserializeOwned>(&self, path: &str) -> Result<T, Error> {
         let token = self.auth.get_token().await?;
         let url = self.base_url.join(path)?;
+        debug!(target: "esplora_rs", "GET {}", url);
+
+        let mut req = self
+            .http_client
+            .get(url.clone())
+            .header(ACCEPT, "application/json");
+        if let Some(token) = token {
+            req = req.header(AUTHORIZATION, format!("Bearer {}", token));
+            trace!(target: "esplora_rs", "Using auth token");
+        }
+
+        let response = req.send().await?;
+        let status = response.status();
+        debug!(target: "esplora_rs", "GET {} -> {}", url, status);
+
+        if !status.is_success() {
+            let body = response.text().await.unwrap_or_default();
+            error!(target: "esplora_rs", "GET {} failed ({}): {}", url, status, body);
+            return Err(Error::Api(format!("HTTP {}: {}", status, body)));
+        }
+
+        Ok(response.json().await?)
+    }
+
+    /// Like [`Self::get`], but attaches URL-encoded query parameters. The `url`
+    /// crate percent-encodes values, so callers may pass raw descriptors,
+    /// addresses, etc. without hand-encoding `#`, `/`, `*`, `<`, `;`, `>`.
+    async fn get_query<T: serde::de::DeserializeOwned>(
+        &self,
+        path: &str,
+        params: Vec<(String, String)>,
+    ) -> Result<T, Error> {
+        // Build the URL (consuming the owned `params`) *before* any await, and
+        // take `params` by value. Holding any borrowed query slice
+        // (`&[(&str, &str)]`) alive across an await point trips the "Send is not
+        // general enough" HRTB bound when this future is driven from an async
+        // request handler; owned `Vec<(String, String)>` sidesteps it.
+        let mut url = self.base_url.join(path)?;
+        url.query_pairs_mut()
+            .extend_pairs(params.iter().map(|(k, v)| (k.as_str(), v.as_str())));
+        drop(params);
+        let token = self.auth.get_token().await?;
         debug!(target: "esplora_rs", "GET {}", url);
 
         let mut req = self
@@ -446,6 +488,80 @@ impl Client {
     /// Searches for addresses with a given prefix.
     pub async fn search_addresses(&self, prefix: &str) -> Result<Vec<String>, Error> {
         self.get(&format!("address-prefix/{}", prefix)).await
+    }
+
+    // QuickSync / Waterfalls
+
+    /// Fetches one page of `/v2/waterfalls` history for a descriptor, scanning
+    /// derivation indices `0..=to_index`.
+    ///
+    /// A single call returns the descriptor's per-index transaction history
+    /// (one `txs_seen` key per single-path branch), replacing the many
+    /// per-address round-trips of a gap-limit scan. `to_index` bounds the
+    /// server-side derivation (its default is `0`, so pass a real depth).
+    ///
+    /// The endpoint is `<base>/waterfalls/v2/waterfalls`; point `base_url` at a
+    /// host that serves QuickSync (e.g. `enterprise.blockstream.info/<chain>/api`,
+    /// authenticated, or a self-hosted `waterfalls` instance).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the request fails, the endpoint is unavailable, or the
+    /// response cannot be decoded.
+    pub async fn get_waterfalls(
+        &self,
+        descriptor: &str,
+        to_index: u32,
+        page: u16,
+    ) -> Result<WaterfallResponse, Error> {
+        self.get_query(
+            "waterfalls/v2/waterfalls",
+            vec![
+                ("descriptor".to_string(), descriptor.to_string()),
+                ("to_index".to_string(), to_index.to_string()),
+                ("page".to_string(), page.to_string()),
+            ],
+        )
+        .await
+    }
+
+    /// Pages through `/v2/waterfalls` from page 0 and merges the result into a
+    /// single [`WaterfallResponse`], concatenating each descriptor's per-index
+    /// history across pages. Stops once a page returns no activity (or a hard
+    /// cap is hit) and reports the latest `page`/`tip`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if any page request fails or cannot be decoded.
+    pub async fn get_waterfalls_all(
+        &self,
+        descriptor: String,
+        to_index: u32,
+    ) -> Result<WaterfallResponse, Error> {
+        /// Safety cap so a misbehaving server can't loop forever.
+        const MAX_PAGES: u16 = 100;
+
+        fn has_activity(resp: &WaterfallResponse) -> bool {
+            resp.txs_seen.values().flatten().any(|idx| !idx.is_empty())
+        }
+
+        // Owned `descriptor` (not a borrowed `&str`) so no external-lifetime
+        // borrow is held across an await — keeps the future `for<'a> Send`, as
+        // async request handlers require.
+        let mut acc = self.get_waterfalls(&descriptor, to_index, 0).await?;
+        let mut keep_going = has_activity(&acc);
+        let mut page: u16 = 1;
+        while keep_going && page < MAX_PAGES {
+            let next = self.get_waterfalls(&descriptor, to_index, page).await?;
+            keep_going = has_activity(&next);
+            for (key, mut sightings) in next.txs_seen {
+                acc.txs_seen.entry(key).or_default().append(&mut sightings);
+            }
+            acc.page = next.page;
+            acc.tip = next.tip;
+            page += 1;
+        }
+        Ok(acc)
     }
 
     // Mempool
@@ -947,5 +1063,87 @@ mod tests {
         assert!(result.is_ok(), "API call failed: {:?}", result.err());
         let info = result.unwrap();
         assert_eq!(info.asset_id, asset_id);
+    }
+
+    #[test]
+    fn test_waterfalls_empty_addresses_parses() {
+        // The exact shape returned by a live `?addresses=…` call with no history
+        // (captured against enterprise testnet, 2026-07-12). Locks the address
+        // form + the empty inner vec + absent optional fields.
+        let body = r#"{"txs_seen":{"addresses":[[]]},"page":0,"tip":"00000000000000bcef2b46cddb481fd75a834f2272d58226c097892538660c36"}"#;
+        let resp: WaterfallResponse = serde_json::from_str(body).unwrap();
+        assert_eq!(resp.page, 0);
+        assert_eq!(
+            resp.tip,
+            "00000000000000bcef2b46cddb481fd75a834f2272d58226c097892538660c36"
+        );
+        let addrs = resp.txs_seen.get("addresses").unwrap();
+        assert_eq!(addrs.len(), 1);
+        assert!(addrs[0].is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_get_waterfalls_mocked() {
+        let server = MockServer::start();
+        mock_auth_server(&server);
+
+        let descriptor = "wpkh(tpubDTEST/<0;1>/*)#abcdefgh";
+        let api_mock = server.mock(|when, then| {
+            when.method(GET)
+                .path("/waterfalls/v2/waterfalls")
+                .query_param("descriptor", descriptor)
+                .query_param("to_index", "20")
+                .query_param("page", "0")
+                .header("Authorization", "Bearer test_token");
+            then.status(200)
+                .header("content-type", "application/json")
+                .body_from_file("src/testdata/waterfalls_v2.json");
+        });
+
+        let token_url = Url::parse(&server.url("/token")).unwrap();
+        let client = Client::from_parts(
+            &server.base_url(),
+            token_url,
+            "test_id".to_string(),
+            "test_secret".to_string(),
+        )
+        .unwrap();
+        let result = client.get_waterfalls(descriptor, 20, 0).await;
+
+        api_mock.assert();
+        let resp = result.unwrap();
+        assert_eq!(resp.page, 0);
+        let sightings = resp.txs_seen.get("wpkh(tpubDTEST/0/*)#abcdefgh").unwrap();
+        assert_eq!(sightings.len(), 2); // two derivation indices
+        assert_eq!(sightings[0].len(), 2); // index 0 has two txs
+        assert_eq!(
+            sightings[0][0].txid,
+            "6ac214c3833ee06f7a30636dac66f0e5c025ece2693cc3f85a8c22fb2dcb2fa1"
+        );
+        assert_eq!(sightings[0][0].block_timestamp, Some(1_715_939_108));
+        // index 1's tx is unconfirmed (height 0, no block fields)
+        assert_eq!(sightings[1][0].height, 0);
+        assert!(sightings[1][0].block_hash.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_get_waterfalls_live_testnet() {
+        if !should_run_live_tests() {
+            println!("Skipping live waterfalls test");
+            return;
+        }
+        // Enterprise QuickSync (testnet). Requires ESPLORA_CLIENT_ID/SECRET and a
+        // paid tier; signet is not offered by Blockstream QuickSync.
+        let client = Client::new("https://enterprise.blockstream.info/testnet/api/").unwrap();
+        let address = "tb1qrjywckd6n2j9nd0sg82w84mstuydt5fksd5szn";
+        let result = client
+            .get_query::<WaterfallResponse>(
+                "waterfalls/v2/waterfalls",
+                vec![("addresses".to_string(), address.to_string())],
+            )
+            .await;
+        assert!(result.is_ok(), "API call failed: {:?}", result.err());
+        let resp = result.unwrap();
+        assert!(!resp.tip.is_empty());
     }
 }
