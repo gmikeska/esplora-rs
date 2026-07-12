@@ -90,9 +90,18 @@ impl Auth {
     }
 
     async fn fetch_token(&self, inner: &mut AuthInner) -> Result<Token, Error> {
-        let client_id = inner.client_id.as_ref().ok_or(Error::Auth("client_id not set".into()))?;
-        let client_secret = inner.client_secret.as_ref().ok_or(Error::Auth("client_secret not set".into()))?;
-        let token_url = inner.token_url.as_ref().ok_or(Error::Auth("token_url not set".into()))?;
+        let client_id = inner
+            .client_id
+            .as_ref()
+            .ok_or(Error::Auth("client_id not set".into()))?;
+        let client_secret = inner
+            .client_secret
+            .as_ref()
+            .ok_or(Error::Auth("client_secret not set".into()))?;
+        let token_url = inner
+            .token_url
+            .as_ref()
+            .ok_or(Error::Auth("token_url not set".into()))?;
 
         let params = [
             ("grant_type", "client_credentials"),
@@ -113,7 +122,8 @@ impl Auth {
 
         let new_token = Token {
             access_token: token_response.access_token,
-            expires: Utc::now() + Duration::seconds(token_response.expires_in - TOKEN_EXPIRY_BUFFER_SECONDS),
+            expires: Utc::now()
+                + Duration::seconds(token_response.expires_in - TOKEN_EXPIRY_BUFFER_SECONDS),
         };
 
         inner.token = Some(new_token.clone());
