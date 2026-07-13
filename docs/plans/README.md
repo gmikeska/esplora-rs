@@ -24,8 +24,12 @@ so each phase lands green (fmt + pedantic clippy + tests) before the next.
 |---|---|---|---|
 | **1** | [`01-ergonomics-fixes.md`](01-ergonomics-fixes.md) | Fix extant ergonomics/robustness issues: **structured error type** exposing HTTP status (so `429`/`401` are matchable), timeouts, retry/backoff, an **explicit-credentials constructor**, and validating the **enterprise-auth path** against real creds. | esplora-rs **0.2.0** (breaking: `Error`) |
 | **2** | [`02-integration-and-shuttle.md`](02-integration-and-shuttle.md) | Point `emvault-core`'s `esplora_sync` at **enterprise Esplora**, finish validating **test-app-pkcs11** on signet, then integrate **groupvault** and deploy to **Shuttle.dev** (signet). | emvault 0.3.0 → groupvault deploy |
-| **3** | [`03-preload-and-readiness.md`](03-preload-and-readiness.md) | **Preload:** sync every wallet at boot behind a **readiness gate** (splash until data is ready); take sync **off the render path** so page loads are instant. App wiring only — no esplora-rs change. *(Deferred — restore after Phase 4/5.)* | test-app-pkcs11 (→ mirror in groupvault) |
 | **4** | [`04-waterfalls-endpoint.md`](04-waterfalls-endpoint.md) | **Waterfalls client** (`/v2/waterfalls`): one descriptor query returns a wallet's full per-index history — the low-query-count **dev/staging** chain source. esplora-rs client + models only. | esplora-rs (additive) |
+
+> **Preload / readiness-gate (dropped 2026-07-13).** An earlier Phase 3 proposed
+> moving sync off the render path behind a boot-time readiness gate. Dropped at
+> Greg's call — waterfalls makes the render-path sync cheap, and the Send/Federation
+> tabs already skip their redundant sync. Not planned.
 
 ## Guiding constraints (all phases)
 - **Keep the crate `bitcoin`-dependency-free.** Any typed conveniences go behind

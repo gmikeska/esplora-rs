@@ -18,7 +18,6 @@ an address-based scan to ~1. This is the low-query-count chain source for the
   preload in the first place.
 - **This phase = esplora-rs client only.** The bespoke emvault-core sync
   (`esplora_waterfalls_sync`) and the pkcs11 wiring are **Phase 5** (below).
-  Preload/readiness is deferred and restored later.
 
 ## The endpoint (confirmed live against Blockstream QuickSync, 2026-07-12)
 
@@ -231,8 +230,8 @@ pub async fn get_waterfalls_all(&self, descriptor: &str, to_index: u32)
   `emitter_sync` (node), behind the same `SyncResult` seam.
 - **pkcs11:** add a `Waterfalls` chain-backend mode (env-selected) that routes
   `UserWallet::sync` to `esplora_waterfalls_sync`. With sync now a single fast
-  query, the render-path sync is cheap again — **restore preload afterward** as a
-  clean layer on top, not a prerequisite.
+  query, the render-path sync is cheap — no preload layer needed (that idea was
+  dropped 2026-07-13).
 
 ## Acceptance
 - `get_waterfalls("<testnet descriptor>", to_index, 0)` returns parsed history in

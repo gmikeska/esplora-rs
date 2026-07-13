@@ -5,15 +5,18 @@ Actionable checklist for the enterprise-Esplora initiative. Full rationale in
 ergonomics/robustness (**0.2.0**) → downstream integration
 (emvault → pkcs11 → groupvault → Shuttle).
 
-> **Deferred breaking changes (need the 0.2.0 version bump).** A non-breaking
-> docs pass has landed (crate-level `//!` docs, README refresh, `# Errors`
-> sections). The remaining **API-breaking** work is held for the version bump:
-> - **E1 — structured `Error::Http { status, url, body }`** (replaces
->   `Error::Api(String)`); see *Errors & HTTP robustness* below.
+> **0.2.0 breaking change — E1 landed (2026-07-13).** `Error::Api(String)` is
+> **removed**. Non-2xx responses now return **`Error::Http { status, url, body }`**
+> (and **`Error::RateLimited { url, retry_after, body }`** for `429`, parsing the
+> `Retry-After` header); non-HTTP parse failures return **`Error::Decode(String)`**;
+> client-build failures return `Error::Reqwest`. Version bumped `0.1.1 → 0.2.0`.
+> **Migration:** replace `Err(Error::Api(s))` matches with `Error::Http { .. }` /
+> `Error::RateLimited { .. }` / `Error::Decode(_)`.
+>
+> **Still deferred to a later bump:**
 > - **E4 — explicit `with_credentials(url, id, secret)` constructor** so callers
 >   inject creds instead of `Client::new` reading them from the environment; see
->   *Auth / enterprise* below.
-> Ship these together as **0.2.0** with the migration note.
+>   *Auth / enterprise* below. (Additive; not required for 0.2.0.)
 
 ### Done (docs pass, 2026-07-12)
 - [x] Crate-level `//!` docs (overview, public/enterprise/waterfalls, env-var
@@ -32,9 +35,12 @@ ergonomics/robustness (**0.2.0**) → downstream integration
 ## Phase 1 — Ergonomics & robustness → esplora-rs 0.2.0
 
 ### Errors & HTTP robustness
-- [ ] **E1 — Structured HTTP errors.** Replace `Error::Api(String)` on non-2xx with
-      `Error::Http { status, url, body }` (+ `RateLimited { retry_after }` for 429).
-      Update `get` / `get_plain` / `get_raw` / `broadcast_tx`. **(BREAKING → 0.2.0.)**
+- [x] **E1 — Structured HTTP errors (2026-07-13).** Removed `Error::Api(String)`;
+      non-2xx → `Error::Http { status, url, body }` (+ `RateLimited { url,
+      retry_after, body }` for 429, `Retry-After` parsed); parse failures →
+      `Error::Decode`; build failures → `Error::Reqwest`. Applied to `get` /
+      `get_query` / `get_plain` / `get_raw` / `post` / `broadcast_tx`. Added 5
+      classification tests. **(BREAKING → 0.2.0.)**
 - [ ] **E2 — Request timeout.** Default reqwest timeout (~30s), configurable.
 - [ ] **E3 — Retry/backoff** on 429/5xx (honor `Retry-After`); idempotent GETs only,
       **not** `broadcast_tx`.

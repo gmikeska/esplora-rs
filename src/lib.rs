@@ -53,7 +53,7 @@ pub use models::{
 };
 
 use bytes::Bytes;
-use reqwest::header::{ACCEPT, AUTHORIZATION};
+use reqwest::header::{ACCEPT, AUTHORIZATION, RETRY_AFTER};
 use reqwest::Client as ReqwestClient;
 use tracing::{debug, error, info, trace};
 use url::Url;
@@ -78,6 +78,16 @@ fn ensure_base_slash(url: &str) -> String {
     } else {
         format!("{}/", url)
     }
+}
+
+/// Parse the `Retry-After` header (delta-seconds form) from a response, if
+/// present and numeric. HTTP-date form is not parsed (returns `None`).
+fn retry_after_secs(response: &reqwest::Response) -> Option<u64> {
+    response
+        .headers()
+        .get(RETRY_AFTER)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| s.trim().parse::<u64>().ok())
 }
 
 impl Client {
@@ -110,7 +120,7 @@ impl Client {
         let http_client = ReqwestClient::builder()
             .http1_only()
             .build()
-            .map_err(|e| Error::Api(format!("Failed to build HTTP client: {}", e)))?;
+            .map_err(Error::Reqwest)?;
         let base_url = Url::parse(&ensure_base_slash(base_url))?;
 
         Ok(Self {
@@ -132,7 +142,7 @@ impl Client {
         let http_client = ReqwestClient::builder()
             .http1_only()
             .build()
-            .map_err(|e| Error::Api(format!("Failed to build HTTP client: {}", e)))?;
+            .map_err(Error::Reqwest)?;
         let base_url = Url::parse(&ensure_base_slash(base_url))?;
 
         Ok(Self {
@@ -161,9 +171,10 @@ impl Client {
         debug!(target: "esplora_rs", "GET {} -> {}", url, status);
 
         if !status.is_success() {
+            let retry_after = retry_after_secs(&response);
             let body = response.text().await.unwrap_or_default();
             error!(target: "esplora_rs", "GET {} failed ({}): {}", url, status, body);
-            return Err(Error::Api(format!("HTTP {}: {}", status, body)));
+            return Err(Error::from_status(status, &url, body, retry_after));
         }
 
         Ok(response.json().await?)
@@ -203,9 +214,10 @@ impl Client {
         debug!(target: "esplora_rs", "GET {} -> {}", url, status);
 
         if !status.is_success() {
+            let retry_after = retry_after_secs(&response);
             let body = response.text().await.unwrap_or_default();
             error!(target: "esplora_rs", "GET {} failed ({}): {}", url, status, body);
-            return Err(Error::Api(format!("HTTP {}: {}", status, body)));
+            return Err(Error::from_status(status, &url, body, retry_after));
         }
 
         Ok(response.json().await?)
@@ -238,9 +250,10 @@ impl Client {
         debug!(target: "esplora_rs", "POST {} -> {}", url, status);
 
         if !status.is_success() {
+            let retry_after = retry_after_secs(&response);
             let resp_body = response.text().await.unwrap_or_default();
             error!(target: "esplora_rs", "POST {} failed ({}): {}", url, status, resp_body);
-            return Err(Error::Api(format!("HTTP {}: {}", status, resp_body)));
+            return Err(Error::from_status(status, &url, resp_body, retry_after));
         }
 
         Ok(response.json().await?)
@@ -262,13 +275,14 @@ impl Client {
 
         let response = req.send().await?;
         let status = response.status();
+        let retry_after = retry_after_secs(&response);
         let body = response.text().await?;
 
         debug!(target: "esplora_rs", "GET (plain) {} -> {} (len={})", url, status, body.len());
 
         if !status.is_success() {
             error!(target: "esplora_rs", "GET (plain) {} failed ({}): {}", url, status, body);
-            return Err(Error::Api(format!("HTTP {}: {}", status, body)));
+            return Err(Error::from_status(status, &url, body, retry_after));
         }
 
         trace!(target: "esplora_rs", "GET (plain) response: {}", &body[..body.len().min(200)]);
@@ -294,9 +308,10 @@ impl Client {
         debug!(target: "esplora_rs", "GET (raw) {} -> {}", url, status);
 
         if !status.is_success() {
+            let retry_after = retry_after_secs(&response);
             let body = response.text().await.unwrap_or_default();
             error!(target: "esplora_rs", "GET (raw) {} failed ({}): {}", url, status, body);
-            return Err(Error::Api(format!("HTTP {}: {}", status, body)));
+            return Err(Error::from_status(status, &url, body, retry_after));
         }
 
         let bytes = response.bytes().await?;
@@ -404,7 +419,7 @@ impl Client {
         let height_str = self.get_plain("blocks/tip/height").await?;
         height_str
             .parse::<u64>()
-            .map_err(|e| Error::Api(format!("Failed to parse height: {}", e)))
+            .map_err(|e| Error::Decode(format!("Failed to parse height: {}", e)))
     }
 
     /// Gets a list of transactions in a block.
@@ -526,6 +541,7 @@ impl Client {
         };
 
         let status = response.status();
+        let retry_after = retry_after_secs(&response);
         info!(target: "esplora_rs", "broadcast_tx: Response status: {} {}", status.as_u16(), status.canonical_reason().unwrap_or(""));
 
         debug!(target: "esplora_rs", "broadcast_tx: Reading response body...");
@@ -545,13 +561,18 @@ impl Client {
             info!(target: "esplora_rs", "broadcast_tx: SUCCESS! txid={}", txid);
             Ok(txid)
         } else {
-            let error_msg = format!(
-                "Broadcast rejected (HTTP {}): {}",
+            error!(
+                target: "esplora_rs",
+                "broadcast_tx: FAILED - HTTP {}: {}",
                 status.as_u16(),
                 body.trim()
             );
-            error!(target: "esplora_rs", "broadcast_tx: FAILED - {}", error_msg);
-            Err(Error::Api(error_msg))
+            Err(Error::from_status(
+                status,
+                &url,
+                body.trim().to_string(),
+                retry_after,
+            ))
         }
     }
 
@@ -792,7 +813,7 @@ impl Client {
             .await?;
         supply_str
             .parse::<u64>()
-            .map_err(|e| Error::Api(format!("Failed to parse supply: {}", e)))
+            .map_err(|e| Error::Decode(format!("Failed to parse supply: {}", e)))
     }
 
     /// Gets the total supply of an asset, in decimal form.
@@ -806,7 +827,7 @@ impl Client {
             .await?;
         supply_str
             .parse::<f64>()
-            .map_err(|e| Error::Api(format!("Failed to parse decimal supply: {}", e)))
+            .map_err(|e| Error::Decode(format!("Failed to parse decimal supply: {}", e)))
     }
 }
 
@@ -917,6 +938,115 @@ mod tests {
 
         api_mock.assert();
         assert_eq!(result.unwrap(), 600000);
+    }
+
+    // ── E1: structured HTTP error classification ────────────────────────────
+
+    fn test_client(server: &MockServer) -> Client {
+        let token_url = Url::parse(&server.url("/token")).unwrap();
+        Client::from_parts(
+            &server.base_url(),
+            token_url,
+            "test_id".to_string(),
+            "test_secret".to_string(),
+        )
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn test_non_2xx_maps_to_http_with_status_and_body() {
+        let server = MockServer::start();
+        mock_auth_server(&server);
+        let api_mock = server.mock(|when, then| {
+            when.method(GET).path("/address/tb1qbad");
+            then.status(404).body("not found");
+        });
+
+        let err = test_client(&server)
+            .get_address_info("tb1qbad")
+            .await
+            .unwrap_err();
+        api_mock.assert();
+        match err {
+            Error::Http { status, body, url } => {
+                assert_eq!(status, 404);
+                assert!(body.contains("not found"), "body: {body}");
+                assert!(url.ends_with("/address/tb1qbad"), "url: {url}");
+            }
+            other => panic!("expected Error::Http, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_429_maps_to_rate_limited_with_retry_after() {
+        let server = MockServer::start();
+        mock_auth_server(&server);
+        let api_mock = server.mock(|when, then| {
+            when.method(GET).path("/blocks/tip/height");
+            then.status(429)
+                .header("Retry-After", "7")
+                .body("slow down");
+        });
+
+        let err = test_client(&server).get_tip_height().await.unwrap_err();
+        api_mock.assert();
+        match err {
+            Error::RateLimited { retry_after, .. } => assert_eq!(retry_after, Some(7)),
+            other => panic!("expected Error::RateLimited, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_broadcast_rejection_maps_to_http() {
+        let server = MockServer::start();
+        mock_auth_server(&server);
+        let api_mock = server.mock(|when, then| {
+            when.method(POST).path("/tx");
+            then.status(400).body("bad-txns-inputs-missingorspent");
+        });
+
+        let err = test_client(&server)
+            .broadcast_tx("deadbeef")
+            .await
+            .unwrap_err();
+        api_mock.assert();
+        match err {
+            Error::Http { status, body, .. } => {
+                assert_eq!(status, 400);
+                assert!(body.contains("missingorspent"), "body: {body}");
+            }
+            other => panic!("expected Error::Http, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_unparseable_tip_height_maps_to_decode() {
+        let server = MockServer::start();
+        mock_auth_server(&server);
+        let api_mock = server.mock(|when, then| {
+            when.method(GET).path("/blocks/tip/height");
+            then.status(200).body("not-a-number");
+        });
+
+        let err = test_client(&server).get_tip_height().await.unwrap_err();
+        api_mock.assert();
+        assert!(matches!(err, Error::Decode(_)), "got {err:?}");
+    }
+
+    #[test]
+    fn error_display_is_readable() {
+        let http = Error::Http {
+            status: 404,
+            url: "http://x/tx".to_string(),
+            body: "nope".to_string(),
+        };
+        assert!(http.to_string().contains("404"));
+        let limited = Error::RateLimited {
+            url: "http://x".to_string(),
+            retry_after: Some(3),
+            body: String::new(),
+        };
+        assert!(limited.to_string().contains("retry_after"));
     }
 
     #[tokio::test]
