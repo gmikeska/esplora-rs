@@ -78,6 +78,37 @@ Only the **enterprise credentials** are read from the environment (by
 > constructor (so callers can inject creds instead of relying on env) is planned
 > — see [`docs/TODO.md`](docs/TODO.md) item **E4**.
 
+### Error handling
+
+Every fallible call returns `Result<_, esplora_rs::Error>`. As of **0.2.0** the
+error type is **structured**, so callers can react to specific conditions
+instead of string-matching:
+
+| Variant | When |
+|---|---|
+| `Error::Http { status, url, body }` | a non-2xx response (`401` bad creds, `402` wrong tier, `404` not found, `5xx`, …) — match on `status` |
+| `Error::RateLimited { url, retry_after, body }` | `429 Too Many Requests`; `retry_after` is the `Retry-After` header in seconds when the server sends one |
+| `Error::Decode(String)` | a 2xx response whose body couldn't be parsed (e.g. the plain-text tip height) |
+| `Error::Reqwest(_)` / `Error::Url(_)` / `Error::SerdeJson(_)` | transport / URL / JSON-decode failures |
+| `Error::Auth(String)` / `Error::EnvVar(String)` | enterprise auth failure / missing credential env var |
+
+```rust
+use esplora_rs::{Client, Error};
+
+// inside an async fn, given a `client`:
+match client.get_tip_height().await {
+    Ok(height) => println!("tip {height}"),
+    Err(Error::RateLimited { retry_after, .. }) => {
+        eprintln!("rate limited; retry after {retry_after:?}s");
+    }
+    Err(Error::Http { status: 401, .. }) => eprintln!("bad credentials"),
+    Err(e) => eprintln!("error: {e}"),
+}
+```
+
+> **Breaking change in 0.2.0:** the old catch-all `Error::Api(String)` was
+> removed. Replace any `Err(Error::Api(s))` matches with the variants above.
+
 ### Waterfalls / QuickSync (descriptor scan)
 
 `get_waterfalls` / `get_waterfalls_all` hit `<base>/waterfalls/v2/waterfalls`:
@@ -354,7 +385,7 @@ async fn main() {
 
 The test suite includes both mocked tests and live tests that interact with the Blockstream API.
 
-- The mocked tests can be run with `cargo test -- --all-targets`.
+- The mocked tests run by default with `cargo test`.
 - The live tests for the public API can be run by setting the `ESPLORA_TEST_LIVE` environment variable to `live`:
 
 ```bash
