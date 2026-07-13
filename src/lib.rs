@@ -1,3 +1,44 @@
+//! An async Rust client for the [Blockstream Esplora] HTTP API, plus the
+//! [Waterfalls / QuickSync] descriptor-scan endpoint.
+//!
+//! The crate is deliberately **`bitcoin`-dependency-free**: every value in and
+//! out is a `String`/integer DTO (see [`models`]), so downstream crates on any
+//! `bitcoin`/`bdk` version can consume it without a version conflict.
+//!
+//! # Constructing a client
+//! A [`Client`] is created with the **base URL** of the Esplora instance (the
+//! part ending in `/api`); endpoint paths are joined onto it.
+//!
+//! - [`Client::new_public`] — unauthenticated public instances
+//!   (e.g. `https://blockstream.info/testnet/api`).
+//! - [`Client::new`] — **enterprise** instances that require an OAuth Bearer
+//!   token (e.g. `https://enterprise.blockstream.info/testnet/api`).
+//!
+//! # Environment variables (read by this crate)
+//! ⚠️ The **base URL is a parameter**, but the **enterprise credentials are read
+//! implicitly from the process environment** by [`Client::new`]:
+//!
+//! | Variable | Read by | Purpose |
+//! |---|---|---|
+//! | `ESPLORA_CLIENT_ID` | [`Client::new`] | OAuth `client_id` |
+//! | `ESPLORA_CLIENT_SECRET` | [`Client::new`] | OAuth `client_secret` |
+//! | `ESPLORA_TEST_LIVE` | test suite only | gate for the crate's live tests |
+//!
+//! Any `APP_*` variables (`APP_ESPLORA_URL`, `APP_CHAIN_BACKEND`, …) belong to
+//! the **implementing program**, not this crate — that program reads them and
+//! passes the resulting URL in as `base_url`. *(An explicit
+//! `with_credentials(url, id, secret)` constructor that removes the env read is
+//! tracked in `docs/TODO.md` as E4.)*
+//!
+//! # Waterfalls / QuickSync
+//! [`Client::get_waterfalls`] / [`Client::get_waterfalls_all`] hit
+//! `<base>/waterfalls/v2/waterfalls` — one descriptor query returns a wallet's
+//! full per-index history, replacing an address-by-address gap scan. Enterprise
+//! tier only (no signet). See the [Waterfalls / QuickSync] docs.
+//!
+//! [Blockstream Esplora]: https://github.com/Blockstream/esplora/blob/master/API.md
+//! [Waterfalls / QuickSync]: https://github.com/Blockstream/waterfalls
+
 use std::env;
 
 pub mod auth;
@@ -265,37 +306,65 @@ impl Client {
 
     // Blocks
     /// Gets a block by its hash.
+    ///
+    /// # Errors
+    /// Returns [`Error`] if the request fails, the endpoint returns a non-2xx
+    /// status, or the response body cannot be decoded.
     pub async fn get_block(&self, hash: &str) -> Result<Block, Error> {
         self.get(&format!("block/{}", hash)).await
     }
 
     /// Gets the hex-encoded block header by its hash.
+    ///
+    /// # Errors
+    /// Returns [`Error`] if the request fails, the endpoint returns a non-2xx
+    /// status, or the response body cannot be decoded.
     pub async fn get_block_header(&self, hash: &str) -> Result<String, Error> {
         self.get_plain(&format!("block/{}/header", hash)).await
     }
 
     /// Gets the status of a block by its hash.
+    ///
+    /// # Errors
+    /// Returns [`Error`] if the request fails, the endpoint returns a non-2xx
+    /// status, or the response body cannot be decoded.
     pub async fn get_block_status(&self, hash: &str) -> Result<BlockStatus, Error> {
         self.get(&format!("block/{}/status", hash)).await
     }
 
     /// Gets a list of transaction IDs in a block.
+    ///
+    /// # Errors
+    /// Returns [`Error`] if the request fails, the endpoint returns a non-2xx
+    /// status, or the response body cannot be decoded.
     pub async fn get_block_txids(&self, hash: &str) -> Result<Vec<String>, Error> {
         self.get(&format!("block/{}/txids", hash)).await
     }
 
     /// Gets the transaction ID at a specific index in a block.
+    ///
+    /// # Errors
+    /// Returns [`Error`] if the request fails, the endpoint returns a non-2xx
+    /// status, or the response body cannot be decoded.
     pub async fn get_block_txid_at_index(&self, hash: &str, index: u64) -> Result<String, Error> {
         self.get_plain(&format!("block/{}/txid/{}", hash, index))
             .await
     }
 
     /// Gets the raw block by its hash.
+    ///
+    /// # Errors
+    /// Returns [`Error`] if the request fails, the endpoint returns a non-2xx
+    /// status, or the response body cannot be decoded.
     pub async fn get_raw_block(&self, hash: &str) -> Result<Bytes, Error> {
         self.get_raw(&format!("block/{}/raw", hash)).await
     }
 
     /// Gets the block hash at a specific height.
+    ///
+    /// # Errors
+    /// Returns [`Error`] if the request fails, the endpoint returns a non-2xx
+    /// status, or the response body cannot be decoded.
     pub async fn get_block_hash_from_height(&self, height: u64) -> Result<String, Error> {
         debug!(target: "esplora_rs", "get_block_hash_from_height: Fetching hash for height {}", height);
         let hash = self.get_plain(&format!("block-height/{}", height)).await?;
@@ -304,6 +373,10 @@ impl Client {
     }
 
     /// Gets a list of blocks starting from a specific height.
+    ///
+    /// # Errors
+    /// Returns [`Error`] if the request fails, the endpoint returns a non-2xx
+    /// status, or the response body cannot be decoded.
     pub async fn get_blocks(&self, start_height: Option<u64>) -> Result<Vec<Block>, Error> {
         let path = if let Some(height) = start_height {
             format!("blocks/{}", height)
@@ -314,11 +387,19 @@ impl Client {
     }
 
     /// Gets the hash of the current tip of the chain.
+    ///
+    /// # Errors
+    /// Returns [`Error`] if the request fails, the endpoint returns a non-2xx
+    /// status, or the response body cannot be decoded.
     pub async fn get_tip_hash(&self) -> Result<String, Error> {
         self.get_plain("blocks/tip/hash").await
     }
 
     /// Gets the height of the current tip of the chain.
+    ///
+    /// # Errors
+    /// Returns [`Error`] if the request fails, the endpoint returns a non-2xx
+    /// status, or the response body cannot be decoded.
     pub async fn get_tip_height(&self) -> Result<u64, Error> {
         let height_str = self.get_plain("blocks/tip/height").await?;
         height_str
@@ -342,37 +423,65 @@ impl Client {
 
     // Transactions
     /// Gets a transaction by its ID.
+    ///
+    /// # Errors
+    /// Returns [`Error`] if the request fails, the endpoint returns a non-2xx
+    /// status, or the response body cannot be decoded.
     pub async fn get_tx(&self, txid: &str) -> Result<Transaction, Error> {
         self.get(&format!("tx/{}", txid)).await
     }
 
     /// Gets the status of a transaction by its ID.
+    ///
+    /// # Errors
+    /// Returns [`Error`] if the request fails, the endpoint returns a non-2xx
+    /// status, or the response body cannot be decoded.
     pub async fn get_tx_status(&self, txid: &str) -> Result<TxStatus, Error> {
         self.get(&format!("tx/{}/status", txid)).await
     }
 
     /// Gets the hex-encoded transaction by its ID.
+    ///
+    /// # Errors
+    /// Returns [`Error`] if the request fails, the endpoint returns a non-2xx
+    /// status, or the response body cannot be decoded.
     pub async fn get_tx_hex(&self, txid: &str) -> Result<String, Error> {
         self.get_plain(&format!("tx/{}/hex", txid)).await
     }
 
     /// Gets the raw transaction by its ID.
+    ///
+    /// # Errors
+    /// Returns [`Error`] if the request fails, the endpoint returns a non-2xx
+    /// status, or the response body cannot be decoded.
     pub async fn get_raw_tx(&self, txid: &str) -> Result<Bytes, Error> {
         self.get_raw(&format!("tx/{}/raw", txid)).await
     }
 
     /// Gets the Merkle block proof for a transaction.
+    ///
+    /// # Errors
+    /// Returns [`Error`] if the request fails, the endpoint returns a non-2xx
+    /// status, or the response body cannot be decoded.
     pub async fn get_tx_merkle_block_proof(&self, txid: &str) -> Result<String, Error> {
         self.get_plain(&format!("tx/{}/merkleblock-proof", txid))
             .await
     }
 
     /// Gets the spending status of a transaction output.
+    ///
+    /// # Errors
+    /// Returns [`Error`] if the request fails, the endpoint returns a non-2xx
+    /// status, or the response body cannot be decoded.
     pub async fn get_outspend(&self, txid: &str, vout: u32) -> Result<Outspend, Error> {
         self.get(&format!("tx/{}/outspend/{}", txid, vout)).await
     }
 
     /// Gets the spending status of all outputs of a transaction.
+    ///
+    /// # Errors
+    /// Returns [`Error`] if the request fails, the endpoint returns a non-2xx
+    /// status, or the response body cannot be decoded.
     pub async fn get_outspends(&self, txid: &str) -> Result<Vec<Outspend>, Error> {
         self.get(&format!("tx/{}/outspends", txid)).await
     }
@@ -380,6 +489,10 @@ impl Client {
     /// Broadcasts a transaction to the network.
     ///
     /// Returns the transaction ID on success, or an error with the rejection reason.
+    ///
+    /// # Errors
+    /// Returns [`Error`] if the request fails, the endpoint returns a non-2xx
+    /// status, or the response body cannot be decoded.
     pub async fn broadcast_tx(&self, tx_hex: &str) -> Result<String, Error> {
         info!(target: "esplora_rs", "broadcast_tx: Starting broadcast of {} byte tx", tx_hex.len() / 2);
         debug!(target: "esplora_rs", "broadcast_tx: tx_hex first 100 chars: {}", &tx_hex[..tx_hex.len().min(100)]);
@@ -444,16 +557,28 @@ impl Client {
 
     // Addresses
     /// Gets information about an address.
+    ///
+    /// # Errors
+    /// Returns [`Error`] if the request fails, the endpoint returns a non-2xx
+    /// status, or the response body cannot be decoded.
     pub async fn get_address_info(&self, address: &str) -> Result<AddressInfo, Error> {
         self.get(&format!("address/{}", address)).await
     }
 
     /// Gets information about a scripthash.
+    ///
+    /// # Errors
+    /// Returns [`Error`] if the request fails, the endpoint returns a non-2xx
+    /// status, or the response body cannot be decoded.
     pub async fn get_scripthash_info(&self, hash: &str) -> Result<AddressInfo, Error> {
         self.get(&format!("scripthash/{}", hash)).await
     }
 
     /// Gets a list of transactions for an address.
+    ///
+    /// # Errors
+    /// Returns [`Error`] if the request fails, the endpoint returns a non-2xx
+    /// status, or the response body cannot be decoded.
     pub async fn get_address_txs(&self, address: &str) -> Result<Vec<Transaction>, Error> {
         self.get(&format!("address/{}/txs", address)).await
     }
@@ -473,11 +598,19 @@ impl Client {
     }
 
     /// Gets a list of unconfirmed transactions for an address.
+    ///
+    /// # Errors
+    /// Returns [`Error`] if the request fails, the endpoint returns a non-2xx
+    /// status, or the response body cannot be decoded.
     pub async fn get_address_mempool_txs(&self, address: &str) -> Result<Vec<Transaction>, Error> {
         self.get(&format!("address/{}/txs/mempool", address)).await
     }
 
     /// Gets a list of unspent transaction outputs for an address.
+    ///
+    /// # Errors
+    /// Returns [`Error`] if the request fails, the endpoint returns a non-2xx
+    /// status, or the response body cannot be decoded.
     pub async fn get_address_utxos(&self, address: &str) -> Result<Vec<Utxo>, Error> {
         debug!(target: "esplora_rs", "get_address_utxos: Fetching UTXOs for {}", address);
         let utxos: Vec<Utxo> = self.get(&format!("address/{}/utxo", address)).await?;
@@ -486,6 +619,10 @@ impl Client {
     }
 
     /// Searches for addresses with a given prefix.
+    ///
+    /// # Errors
+    /// Returns [`Error`] if the request fails, the endpoint returns a non-2xx
+    /// status, or the response body cannot be decoded.
     pub async fn search_addresses(&self, prefix: &str) -> Result<Vec<String>, Error> {
         self.get(&format!("address-prefix/{}", prefix)).await
     }
@@ -566,33 +703,57 @@ impl Client {
 
     // Mempool
     /// Gets information about the mempool.
+    ///
+    /// # Errors
+    /// Returns [`Error`] if the request fails, the endpoint returns a non-2xx
+    /// status, or the response body cannot be decoded.
     pub async fn get_mempool_info(&self) -> Result<Mempool, Error> {
         self.get("mempool").await
     }
 
     /// Gets a list of transaction IDs in the mempool.
+    ///
+    /// # Errors
+    /// Returns [`Error`] if the request fails, the endpoint returns a non-2xx
+    /// status, or the response body cannot be decoded.
     pub async fn get_mempool_txids(&self) -> Result<Vec<String>, Error> {
         self.get("mempool/txids").await
     }
 
     /// Gets a list of recent transactions in the mempool.
+    ///
+    /// # Errors
+    /// Returns [`Error`] if the request fails, the endpoint returns a non-2xx
+    /// status, or the response body cannot be decoded.
     pub async fn get_mempool_recent_txs(&self) -> Result<Vec<RecentTx>, Error> {
         self.get("mempool/recent").await
     }
 
     // Fee Estimates
     /// Gets fee estimates for various confirmation targets.
+    ///
+    /// # Errors
+    /// Returns [`Error`] if the request fails, the endpoint returns a non-2xx
+    /// status, or the response body cannot be decoded.
     pub async fn get_fee_estimates(&self) -> Result<FeeEstimates, Error> {
         self.get("fee-estimates").await
     }
 
     // Assets
     /// Gets information about an asset.
+    ///
+    /// # Errors
+    /// Returns [`Error`] if the request fails, the endpoint returns a non-2xx
+    /// status, or the response body cannot be decoded.
     pub async fn get_asset_info(&self, asset_id: &str) -> Result<AssetInfo, Error> {
         self.get(&format!("asset/{}", asset_id)).await
     }
 
     /// Gets a list of transactions for an asset.
+    ///
+    /// # Errors
+    /// Returns [`Error`] if the request fails, the endpoint returns a non-2xx
+    /// status, or the response body cannot be decoded.
     pub async fn get_asset_txs(&self, asset_id: &str) -> Result<Vec<Transaction>, Error> {
         self.get(&format!("asset/{}/txs", asset_id)).await
     }
@@ -612,11 +773,19 @@ impl Client {
     }
 
     /// Gets a list of unconfirmed transactions for an asset.
+    ///
+    /// # Errors
+    /// Returns [`Error`] if the request fails, the endpoint returns a non-2xx
+    /// status, or the response body cannot be decoded.
     pub async fn get_asset_mempool_txs(&self, asset_id: &str) -> Result<Vec<Transaction>, Error> {
         self.get(&format!("asset/{}/txs/mempool", asset_id)).await
     }
 
     /// Gets the total supply of an asset.
+    ///
+    /// # Errors
+    /// Returns [`Error`] if the request fails, the endpoint returns a non-2xx
+    /// status, or the response body cannot be decoded.
     pub async fn get_asset_supply(&self, asset_id: &str) -> Result<u64, Error> {
         let supply_str = self
             .get_plain(&format!("asset/{}/supply", asset_id))
@@ -627,6 +796,10 @@ impl Client {
     }
 
     /// Gets the total supply of an asset, in decimal form.
+    ///
+    /// # Errors
+    /// Returns [`Error`] if the request fails, the endpoint returns a non-2xx
+    /// status, or the response body cannot be decoded.
     pub async fn get_asset_supply_decimal(&self, asset_id: &str) -> Result<f64, Error> {
         let supply_str = self
             .get_plain(&format!("asset/{}/supply/decimal", asset_id))

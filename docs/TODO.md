@@ -1,9 +1,26 @@
 # esplora-rs — TODO
 
 Actionable checklist for the enterprise-Esplora initiative. Full rationale in
-[`docs/DESIGN.md`](docs/DESIGN.md) and [`docs/plans/`](docs/plans/). Sequence:
+[`docs/DESIGN.md`](DESIGN.md) and [`docs/plans/`](plans/). Sequence:
 ergonomics/robustness (**0.2.0**) → downstream integration
 (emvault → pkcs11 → groupvault → Shuttle).
+
+> **Deferred breaking changes (need the 0.2.0 version bump).** A non-breaking
+> docs pass has landed (crate-level `//!` docs, README refresh, `# Errors`
+> sections). The remaining **API-breaking** work is held for the version bump:
+> - **E1 — structured `Error::Http { status, url, body }`** (replaces
+>   `Error::Api(String)`); see *Errors & HTTP robustness* below.
+> - **E4 — explicit `with_credentials(url, id, secret)` constructor** so callers
+>   inject creds instead of `Client::new` reading them from the environment; see
+>   *Auth / enterprise* below.
+> Ship these together as **0.2.0** with the migration note.
+
+### Done (docs pass, 2026-07-12)
+- [x] Crate-level `//!` docs (overview, public/enterprise/waterfalls, env-var
+      behavior + the app-vs-library split).
+- [x] README refresh: real repo URL, corrected enterprise section, **Environment
+      variables** + **Waterfalls/QuickSync** sections (E7).
+- [x] `# Errors` doc sections on every public endpoint method (E8, docs half).
 
 > **Auth note (confirmed 2026-07-12):** the enterprise OAuth flow — token URL
 > `login.blockstream.com/realms/blockstream-public/protocol/openid-connect/token`,

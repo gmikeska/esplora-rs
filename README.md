@@ -4,7 +4,9 @@ A Rust client for the Blockstream Esplora API.
 
 This client provides asynchronous access to the Esplora API. It supports both the public, unauthenticated API and the enterprise API, which requires authentication.
 
-Implements all endpoints documented at https://github.com/Blockstream/esplora/blob/master/API.md.
+Implements all endpoints documented at https://github.com/Blockstream/esplora/blob/master/API.md, plus the enterprise **Waterfalls / QuickSync** descriptor-scan endpoint.
+
+The crate is deliberately `bitcoin`-dependency-free (String/int DTOs), so it composes with any downstream `bitcoin`/`bdk` version.
 
 ## Adding to Your Project
 
@@ -12,7 +14,7 @@ To use this client in your Rust project, add the following to your `Cargo.toml` 
 
 ```toml
 [dependencies]
-esplora-rs = { git = "https://github.com/example/esplora-rs" } # Replace with the actual git repository URL
+esplora-rs = { git = "https://github.com/gmikeska/esplora-rs" }
 ```
 
 ## Usage
@@ -38,15 +40,16 @@ async fn main() {
 
 ### Enterprise API
 
-Support for the enterprise API requires setting environment variables for the client ID and secret.
+`Client::new` targets an authenticated **enterprise** instance. It performs the
+OAuth `client_credentials` flow against Blockstream's token endpoint and sends a
+`Bearer` token on every request. The credentials are **read from the process
+environment** (see [Environment variables](#environment-variables) below):
 
 ```rust
-// This is not yet fully supported and may change.
 use esplora_rs::Client;
 
 #[tokio::main]
 async fn main() {
-    // Set up the environment variables before running this
     // export ESPLORA_CLIENT_ID="your_client_id"
     // export ESPLORA_CLIENT_SECRET="your_client_secret"
 
@@ -57,6 +60,47 @@ async fn main() {
     }
 }
 ```
+
+### Environment variables
+
+Only the **enterprise credentials** are read from the environment (by
+`Client::new`). The base URL is always an explicit argument.
+
+| Variable | Read by | Purpose |
+|---|---|---|
+| `ESPLORA_CLIENT_ID` | `Client::new` | OAuth `client_id` |
+| `ESPLORA_CLIENT_SECRET` | `Client::new` | OAuth `client_secret` |
+| `ESPLORA_TEST_LIVE` | test suite | set to `live` to run the crate's live tests |
+
+> Note: any `APP_*` variables (e.g. `APP_ESPLORA_URL`) belong to the *program
+> using* this crate, not to esplora-rs — that program reads them and passes the
+> URL in as `base_url`. An explicit `with_credentials(url, id, secret)`
+> constructor (so callers can inject creds instead of relying on env) is planned
+> — see [`docs/TODO.md`](docs/TODO.md) item **E4**.
+
+### Waterfalls / QuickSync (descriptor scan)
+
+`get_waterfalls` / `get_waterfalls_all` hit `<base>/waterfalls/v2/waterfalls`:
+one query returns a whole wallet's per-index history from a **descriptor**,
+instead of walking addresses one by one. This is a Blockstream **enterprise**
+feature (mainnet / testnet / liquid / liquidtestnet — not signet).
+
+```rust
+use esplora_rs::Client;
+
+#[tokio::main]
+async fn main() {
+    // enterprise creds in env (see above)
+    let client = Client::new("https://enterprise.blockstream.info/testnet/api/").unwrap();
+    let descriptor = "wpkh([00000000/84h/1h/0h]tpub.../<0;1>/*)#checksum".to_string();
+    // scan derivation indices 0..=50, paging until exhausted
+    let history = client.get_waterfalls_all(descriptor, 50).await.unwrap();
+    println!("tip {}, {} branch(es)", history.tip, history.txs_seen.len());
+}
+```
+
+See the [waterfalls server](https://github.com/Blockstream/waterfalls) for the
+protocol and the age-encrypted-descriptor option.
 
 ### Bitcoin Endpoints
 
