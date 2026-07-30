@@ -8,6 +8,8 @@ Implements all endpoints documented at https://github.com/Blockstream/esplora/bl
 
 The crate is deliberately `bitcoin`-dependency-free (String/int DTOs), so it composes with any downstream `bitcoin`/`bdk` version.
 
+Release notes are in the [CHANGELOG](https://github.com/gmikeska/esplora-rs/blob/master/CHANGELOG.md).
+
 ## Adding to Your Project
 
 To use this client in your Rust project, add the following to your `Cargo.toml` file:
