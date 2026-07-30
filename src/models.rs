@@ -7,8 +7,11 @@ pub struct Block {
     pub id: String,
     /// The block height.
     pub height: u64,
-    /// The block version.
-    pub version: u32,
+    /// The block version. Bitcoin's `nVersion` is a signed `int32`
+    /// (rust-bitcoin `block::Version` wraps `i32`), so Esplora can surface a
+    /// negative value; typed `i32` to avoid a decode failure of the same class
+    /// as the waterfalls `v: -1` sentinel.
+    pub version: i32,
     /// The block timestamp.
     pub timestamp: u64,
     /// The number of transactions in the block.
@@ -105,8 +108,11 @@ pub struct Vout {
 pub struct Transaction {
     /// The transaction ID.
     pub txid: String,
-    /// The transaction version.
-    pub version: u32,
+    /// The transaction version. `nVersion` is a signed `int32` at the consensus
+    /// level (rust-bitcoin `transaction::Version` wraps `i32`), so a negative
+    /// value is representable on the wire; typed `i32` for the same reason as
+    /// [`Block::version`].
+    pub version: i32,
     /// The transaction locktime.
     pub locktime: u32,
     /// The list of transaction inputs.
@@ -306,9 +312,14 @@ pub struct TxSeen {
     /// The timestamp of the confirming block, when confirmed.
     #[serde(default)]
     pub block_timestamp: Option<u64>,
-    /// A per-sighting version marker present in some server responses.
+    /// A per-sighting marker present in some server responses. Waterfalls uses
+    /// it to distinguish an *output* sighting (small non-negative index) from a
+    /// *spend/input* sighting, which the server flags with the sentinel `-1`.
+    /// Kept as `i64` so that sentinel deserializes (the earlier `height` u32→i64
+    /// loosening in 8c9b645 missed this field); the client never reads it — the
+    /// waterfalls scan uses only `txid` + the sighting's index position.
     #[serde(default)]
-    pub v: Option<u32>,
+    pub v: Option<i64>,
 }
 
 /// The `/v2/waterfalls` response: a descriptor's (or address set's) transaction

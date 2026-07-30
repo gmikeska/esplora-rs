@@ -1,0 +1,22 @@
+{
+  "txs_seen": {
+    "wsh(sortedmulti(2,tpubDTESTa/0/*,tpubDTESTb/0/*))#r8tfhv7t": [
+      [
+        {
+          "txid": "f18f49053b057ae991d9f393ad3ceca5a086f98b4005310e3caf75625dac32e0",
+          "height": 102,
+          "block_hash": "3f9da194e1b47d0f604a9a4f3ab730ecb15e40da5fee7763c3a71cf982c4ef7f",
+          "block_timestamp": 1785427830
+        },
+        {
+          "txid": "16e14208bc4a4fbc3b554f951437c5c1763c3d6cf487ba1646c00eebab469b1d",
+          "height": 0,
+          "v": -1
+        }
+      ],
+      []
+    ]
+  },
+  "page": 0,
+  "tip": "65fed8e3e8b6c08329e0c0a3d6f2f4a1b8c7d6e5f4a3b2c1d0e9f8a7b6c5d4e3"
+}

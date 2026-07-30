@@ -1385,6 +1385,72 @@ mod tests {
         assert!(addrs[0].is_empty());
     }
 
+    #[test]
+    fn test_waterfalls_spend_sighting_negative_v_parses() {
+        // Regression: a Waterfalls spend/input sighting carries the sentinel
+        // `"v": -1`, which fails to deserialize when `TxSeen.v` is `u32`
+        // ("invalid value: integer -1, expected u32"). Captured live from a
+        // RCasatta waterfalls server against a 2-of-2 wsh whose external branch
+        // had a mempool sweep spending the funding output. `TxSeen.v` is `i64`
+        // so this decodes; the client never reads the field.
+        let body = include_str!("testdata/waterfalls_v2_spend.json");
+        let resp: WaterfallResponse = serde_json::from_str(body).unwrap();
+        assert_eq!(resp.page, 0);
+        let key = "wsh(sortedmulti(2,tpubDTESTa/0/*,tpubDTESTb/0/*))#r8tfhv7t";
+        let sightings = resp.txs_seen.get(key).unwrap();
+        // index 0 holds the funding output sighting + the spend sighting.
+        assert_eq!(sightings[0].len(), 2);
+        // The confirmed funding sighting has no `v`.
+        assert_eq!(sightings[0][0].height, 102);
+        assert!(sightings[0][0].v.is_none());
+        // The spend sighting: unconfirmed (height 0) with the `-1` sentinel.
+        assert_eq!(
+            sightings[0][1].txid,
+            "16e14208bc4a4fbc3b554f951437c5c1763c3d6cf487ba1646c00eebab469b1d"
+        );
+        assert_eq!(sightings[0][1].height, 0);
+        assert_eq!(sightings[0][1].v, Some(-1));
+    }
+
+    #[test]
+    fn test_negative_version_parses() {
+        // Regression for the `Block`/`Transaction::version` u32 -> i32 widening.
+        // Bitcoin's `nVersion` is a signed `int32` (rust-bitcoin's `Version`
+        // wraps `i32`), so Esplora can surface a negative version -- the same
+        // bug class as the waterfalls `v: -1` sentinel. A `u32`-typed field
+        // fails with "invalid value: integer -1, expected u32"; `i32` decodes
+        // it. Nothing downstream reads `.version`, so widening is safe.
+        let block = r#"{
+            "id": "00000000000000000005930aa4894de96644480436473138535038e9e4933eb9",
+            "height": 600000,
+            "version": -1,
+            "timestamp": 1573135017,
+            "tx_count": 2369,
+            "size": 1369324,
+            "weight": 3991660,
+            "merkle_root": "a2e53369b54d4e9dd1472598336341f53a5e8f49fa6911c43f145a38535038e9",
+            "previousblockhash": null,
+            "nonce": 0,
+            "bits": 402690119
+        }"#;
+        let block: Block = serde_json::from_str(block).unwrap();
+        assert_eq!(block.version, -1);
+
+        let tx = r#"{
+            "txid": "16e14208bc4a4fbc3b554f951437c5c1763c3d6cf487ba1646c00eebab469b1d",
+            "version": -2,
+            "locktime": 0,
+            "vin": [],
+            "vout": [],
+            "size": 0,
+            "weight": 0,
+            "fee": 0,
+            "status": {"confirmed": false}
+        }"#;
+        let tx: Transaction = serde_json::from_str(tx).unwrap();
+        assert_eq!(tx.version, -2);
+    }
+
     #[tokio::test]
     async fn test_get_waterfalls_mocked() {
         let server = MockServer::start();
